@@ -1,15 +1,15 @@
--- Blox Fruits Auto Farm | olliE Hub v10
+-- Blox Fruits Auto Farm | olliE Hub v11
 -- Pure Lua | Delta Mobile | Paste direct
--- Auto accepts quest dialog | Farms above mob heads | Full UI
+-- TRUE hover above mob heads using CFrame
 
 local ok, err = pcall(function()
 
-local Players   = game:GetService("Players")
-local UIS       = game:GetService("UserInputService")
-local VIM       = game:GetService("VirtualInputManager")
-local TW        = game:GetService("TweenService")
-local RS        = game:GetService("ReplicatedStorage")
-local lp        = Players.LocalPlayer
+local Players = game:GetService("Players")
+local UIS     = game:GetService("UserInputService")
+local VIM     = game:GetService("VirtualInputManager")
+local TW      = game:GetService("TweenService")
+local RS      = game:GetService("ReplicatedStorage")
+local lp      = Players.LocalPlayer
 
 local char = lp.Character or lp.CharacterAdded:Wait()
 char:WaitForChild("HumanoidRootPart", 10)
@@ -25,9 +25,8 @@ local CFG = {
     AutoQuest   = false,
     AutoHaki    = false,
     ScanRadius  = 2000,
-    AttackRange = 10,
     SafeHP      = 0.25,
-    HoverHeight = 2.5, -- studs above mob head
+    HoverHeight = 5, -- studs above mob HumanoidRootPart
 }
 
 local function GetChar() return lp.Character end
@@ -50,25 +49,61 @@ local function IsAlive()
 end
 
 -- ══════════════════════════════════════════
---  WALK — hover above mob head
+--  FLY SETUP — bypass gravity to hover
 -- ══════════════════════════════════════════
-local function WalkTo(pos)
-    local h = GetHum()
-    local r = GetHRP()
-    if not h or not r then return end
-    -- target position is above the mob's head
-    local above = Vector3.new(pos.X, pos.Y + CFG.HoverHeight, pos.Z)
-    h:MoveTo(above)
+local bodyPos, bodyGy
+
+local function EnableFly()
+    local hrp = GetHRP()
+    if not hrp then return end
+    if hrp:FindFirstChild("ollieBP") then return end
+
+    local bp = Instance.new("BodyPosition")
+    bp.Name      = "ollieBP"
+    bp.MaxForce  = Vector3.new(1e5, 1e5, 1e5)
+    bp.P         = 1e4
+    bp.D         = 1e3
+    bp.Position  = hrp.Position
+    bp.Parent    = hrp
+
+    local bg = Instance.new("BodyGyro")
+    bg.Name     = "ollieBG"
+    bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+    bg.P        = 1e4
+    bg.D        = 1e3
+    bg.CFrame   = hrp.CFrame
+    bg.Parent   = hrp
+
+    bodyPos = bp
+    bodyGy  = bg
+end
+
+local function DisableFly()
+    local hrp = GetHRP()
+    if not hrp then return end
+    local bp = hrp:FindFirstChild("ollieBP")
+    local bg = hrp:FindFirstChild("ollieBG")
+    if bp then bp:Destroy() end
+    if bg then bg:Destroy() end
+    bodyPos = nil
+    bodyGy  = nil
+end
+
+local function FlyTo(pos)
+    local hrp = GetHRP()
+    if not hrp then return end
+    EnableFly()
+    if bodyPos then
+        bodyPos.Position = pos
+    end
+    -- wait until close enough
     local t = 0
-    while t < 10 do
-        task.wait(0.15)
-        t = t + 0.15
-        local r2 = GetHRP()
-        if not r2 then return end
-        if (r2.Position - above).Magnitude < CFG.AttackRange then return end
-        if math.floor(t) ~= math.floor(t - 0.15) then
-            h:MoveTo(above)
-        end
+    while t < 6 do
+        task.wait(0.1)
+        t = t + 0.1
+        local r = GetHRP()
+        if not r then return end
+        if (r.Position - pos).Magnitude < 8 then break end
     end
 end
 
@@ -114,7 +149,7 @@ local function Skills()
         Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F
     }
     for _, k in ipairs(keys) do
-        pcall(function() VIM:SendKeyEvent(true, k, false, game) end)
+        pcall(function() VIM:SendKeyEvent(true,  k, false, game) end)
         task.wait(0.05)
         pcall(function() VIM:SendKeyEvent(false, k, false, game) end)
         task.wait(0.05)
@@ -122,29 +157,20 @@ local function Skills()
 end
 
 -- ══════════════════════════════════════════
---  AUTO QUEST — clicks Accept button in dialog
+--  AUTO QUEST
 -- ══════════════════════════════════════════
-local function ClickAcceptButton()
-    -- search all GUIs for the Accept button BF uses
+local function ClickAccept()
     for _, gui in ipairs(lp.PlayerGui:GetDescendants()) do
-        if gui:IsA("TextButton") or gui:IsA("TextLabel") then
-            local t = string.lower(gui.Text or "")
+        if (gui:IsA("TextButton") or gui:IsA("TextLabel")) then
+            local t = string.lower(tostring(gui.Text))
             if t == "accept" or t == "accept quest" then
-                -- fire a click on it
+                pcall(function() gui:SimulateClick() end)
                 pcall(function()
-                    local vClick = Instance.new("InputObject")
-                    vClick.UserInputType = Enum.UserInputType.MouseButton1
-                    gui:SimulateClick()
-                end)
-                -- fallback: fire the remote directly
-                pcall(function()
-                    local remotes = {"TakeQuest","QuestStart","Quest","GiveQuest"}
-                    for _, name in ipairs(remotes) do
+                    local names = {"TakeQuest","QuestStart","Quest","GiveQuest"}
+                    for _, name in ipairs(names) do
                         local rem = RS:FindFirstChild(name, true)
                         if rem and rem:IsA("RemoteEvent") then
                             rem:FireServer("Accept")
-                            rem:FireServer(1)
-                            rem:FireServer(true)
                         end
                     end
                 end)
@@ -153,34 +179,12 @@ local function ClickAcceptButton()
     end
 end
 
-local function FindQuestNPC()
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") then
-            local low = string.lower(obj.Name)
-            if string.find(low,"quest") or string.find(low,"marine") or string.find(low,"military") then
-                local qr = obj:FindFirstChild("HumanoidRootPart")
-                if qr then return qr end
-            end
-        end
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if CFG.AutoQuest then pcall(ClickAccept) end
     end
-    return nil
-end
-
-local function TryQuest()
-    -- click any open Accept button first
-    ClickAcceptButton()
-    task.wait(0.3)
-
-    -- walk to quest NPC if no dialog open
-    local npc = FindQuestNPC()
-    if npc and GetHRP() then
-        if (GetHRP().Position - npc.Position).Magnitude > 15 then
-            WalkTo(npc.Position)
-            task.wait(0.5)
-        end
-        ClickAcceptButton()
-    end
-end
+end)
 
 -- ══════════════════════════════════════════
 --  AUTO HAKI
@@ -198,45 +202,57 @@ task.spawn(function()
 end)
 
 -- ══════════════════════════════════════════
---  QUEST DIALOG WATCHER — fires the moment dialog appears
--- ══════════════════════════════════════════
-task.spawn(function()
-    while true do
-        task.wait(0.5)
-        if CFG.AutoQuest then
-            pcall(ClickAcceptButton)
-        end
-    end
-end)
-
--- ══════════════════════════════════════════
 --  MAIN LOOP
 -- ══════════════════════════════════════════
 local loopTick = 0
 task.spawn(function()
     while true do
         task.wait(0.15)
-        if not CFG.AutoFarm then continue end
+        if not CFG.AutoFarm then
+            DisableFly()
+            continue
+        end
         if not IsAlive() then task.wait(2) continue end
-        if GetHP() < CFG.SafeHP then task.wait(2) continue end
-
-        loopTick = loopTick + 1
-        if CFG.AutoQuest and loopTick % 60 == 0 then
-            pcall(TryQuest)
+        if GetHP() < CFG.SafeHP then
+            DisableFly()
+            task.wait(2)
+            continue
         end
 
+        loopTick = loopTick + 1
+
         local mobs = GetMobs()
-        if #mobs == 0 then task.wait(1) continue end
+        if #mobs == 0 then
+            DisableFly()
+            task.wait(1)
+            continue
+        end
 
         local target = mobs[1]
         if not target or target.hum.Health <= 0 then continue end
 
-        WalkTo(target.root.Position)
+        -- fly to position ABOVE mob head
+        local hoverPos = Vector3.new(
+            target.root.Position.X,
+            target.root.Position.Y + CFG.HoverHeight,
+            target.root.Position.Z
+        )
+
+        FlyTo(hoverPos)
         if not IsAlive() then continue end
         if target.hum.Health <= 0 then continue end
 
+        -- attack while hovering above
         local kt = 0
         while target.hum.Health > 0 and kt < 10 and IsAlive() do
+            -- keep hovering above target as it moves
+            if bodyPos and target.root then
+                bodyPos.Position = Vector3.new(
+                    target.root.Position.X,
+                    target.root.Position.Y + CFG.HoverHeight,
+                    target.root.Position.Z
+                )
+            end
             M1()
             Skills()
             task.wait(0.2)
@@ -256,7 +272,7 @@ end
 --  UI
 -- ══════════════════════════════════════════
 local sg = Instance.new("ScreenGui")
-sg.Name           = "olliEv10"
+sg.Name           = "olliEv11"
 sg.ResetOnSpawn   = false
 sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent         = lp.PlayerGui
@@ -287,7 +303,7 @@ topTxt.BackgroundTransparency = 1
 topTxt.TextColor3         = Color3.fromRGB(255,255,255)
 topTxt.Font               = Enum.Font.GothamBold
 topTxt.TextSize           = 14
-topTxt.Text               = "olliE BF Farm v10"
+topTxt.Text               = "olliE BF Farm v11"
 topTxt.TextXAlignment     = Enum.TextXAlignment.Left
 
 local minBtn = Instance.new("TextButton", topbar)
@@ -352,7 +368,7 @@ task.spawn(function()
         }):Play()
         hpLabel.Text = "HP: " .. tostring(pct) .. "%"
         if CFG.AutoFarm then
-            statusDot.Text = "● farming"
+            statusDot.Text = "● farming + flying"
             statusDot.TextColor3 = Color3.fromRGB(80,220,120)
         else
             statusDot.Text = "● idle"
@@ -431,7 +447,7 @@ local function MakeToggle(labelTxt, desc, posY, onColor, callback)
     end)
 end
 
-MakeToggle("Auto Farm",  "walks to mobs & attacks",  65,
+MakeToggle("Auto Farm",  "fly above mobs & attack",   65,
     Color3.fromRGB(50,180,90),  function(v) CFG.AutoFarm  = v end)
 MakeToggle("Auto Quest", "auto accepts quest dialog", 127,
     Color3.fromRGB(60,120,220), function(v) CFG.AutoQuest = v end)
@@ -477,4 +493,4 @@ UIS.InputChanged:Connect(function(i)
 end)
 
 end)
-if not ok then warn("[olliE v10] ERROR: " .. tostring(err)) end
+if not ok then warn("[olliE v11] ERROR: " .. tostring(err)) end
