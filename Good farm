@@ -1,0 +1,204 @@
+-- Blox Fruits Auto Farm v2 — Delta Executor
+-- Language: Lua (Luau) | Runtime: Roblox via Delta
+-- Method: direct CFrame tp + humanoid attack, no remote guessing
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local lp = Players.LocalPlayer
+local mouse = lp:GetMouse()
+
+-- ══════════════════════════════════════════
+--  CONFIG
+-- ══════════════════════════════════════════
+local CFG = {
+    AutoFarm    = true,
+    MobRange    = 60,
+    SafeHP      = 0.20,
+    TpDelay     = 0.15,
+    TargetLevel = 2450,
+}
+
+-- ══════════════════════════════════════════
+--  HELPERS
+-- ══════════════════════════════════════════
+local function getHRP()
+    local c = lp.Character
+    return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function getHum()
+    local c = lp.Character
+    return c and c:FindFirstChildOfClass("Humanoid")
+end
+
+local function hpPct()
+    local h = getHum()
+    if h then return h.Health / h.MaxHealth end
+    return 1
+end
+
+local function tpTo(pos)
+    local hrp = getHRP()
+    if hrp then
+        hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3.5, 0))
+    end
+end
+
+-- ══════════════════════════════════════════
+--  MOB FINDER — walks ALL workspace models
+-- ══════════════════════════════════════════
+local function getNearestMob()
+    local hrp = getHRP()
+    if not hrp then return nil end
+
+    local best, bestDist = nil, math.huge
+
+    for _, model in ipairs(workspace:GetDescendants()) do
+        if model:IsA("Model") and model ~= lp.Character then
+            local hum  = model:FindFirstChildOfClass("Humanoid")
+            local root = model:FindFirstChild("HumanoidRootPart")
+
+            if hum and root
+                and hum.Health > 0
+                and not Players:GetPlayerFromCharacter(model)
+            then
+                local dist = (hrp.Position - root.Position).Magnitude
+                if dist < CFG.MobRange and dist < bestDist then
+                    best, bestDist = root, dist
+                end
+            end
+        end
+    end
+    return best
+end
+
+-- ══════════════════════════════════════════
+--  ATTACK — simulates click on the mob
+--  Delta supports VirtualInputManager
+-- ══════════════════════════════════════════
+local VIM = game:GetService("VirtualInputManager")
+
+local function attackMob(mobRoot)
+    -- teleport on top
+    tpTo(mobRoot.Position)
+    task.wait(0.05)
+
+    -- simulate left-click burst (M1 chain)
+    for i = 1, 4 do
+        VIM:SendMouseButtonEvent(0, 0, 0, true,  game, 1)
+        task.wait(0.07)
+        VIM:SendMouseButtonEvent(0, 0, 0, false, game, 1)
+        task.wait(0.07)
+    end
+end
+
+-- ══════════════════════════════════════════
+--  SKILL FIRE — keypress Z X C V (default BF keys)
+-- ══════════════════════════════════════════
+local skillKeys = {
+    Enum.KeyCode.Z,
+    Enum.KeyCode.X,
+    Enum.KeyCode.C,
+    Enum.KeyCode.V,
+    Enum.KeyCode.F,
+}
+
+local function fireSkills()
+    for _, key in ipairs(skillKeys) do
+        VIM:SendKeyEvent(true,  key, false, game)
+        task.wait(0.05)
+        VIM:SendKeyEvent(false, key, false, game)
+        task.wait(0.05)
+    end
+end
+
+-- ══════════════════════════════════════════
+--  MAIN LOOP
+-- ══════════════════════════════════════════
+task.spawn(function()
+    while CFG.AutoFarm do
+        task.wait(CFG.TpDelay)
+
+        -- level cap
+        local stats = lp:FindFirstChild("leaderstats") or lp:FindFirstChild("Data")
+        if stats then
+            local lvl = stats:FindFirstChild("Level") or stats:FindFirstChild("Lv")
+            if lvl and tonumber(lvl.Value) >= CFG.TargetLevel then
+                CFG.AutoFarm = false
+                break
+            end
+        end
+
+        -- low HP bail
+        if hpPct() < CFG.SafeHP then
+            task.wait(2)
+            continue
+        end
+
+        local mob = getNearestMob()
+        if mob then
+            attackMob(mob)
+            task.wait(0.1)
+            fireSkills()
+        end
+    end
+end)
+
+-- ══════════════════════════════════════════
+--  GUI
+-- ══════════════════════════════════════════
+local sg = Instance.new("ScreenGui")
+sg.Name = "olliEv2"
+sg.ResetOnSpawn = false
+sg.Parent = lp.PlayerGui
+
+local frame = Instance.new("Frame", sg)
+frame.Size = UDim2.new(0, 160, 0, 60)
+frame.Position = UDim2.new(0, 10, 0.45, 0)
+frame.BackgroundColor3 = Color3.fromRGB(15, 15, 15)
+frame.BorderSizePixel = 0
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 8)
+
+local btn = Instance.new("TextButton", frame)
+btn.Size = UDim2.new(1, -12, 0, 36)
+btn.Position = UDim2.new(0, 6, 0, 12)
+btn.BackgroundColor3 = Color3.fromRGB(50, 160, 80)
+btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+btn.Font = Enum.Font.GothamBold
+btn.TextSize = 13
+btn.Text = "AutoFarm [ON]"
+btn.BorderSizePixel = 0
+Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
+
+btn.MouseButton1Click:Connect(function()
+    CFG.AutoFarm = not CFG.AutoFarm
+    btn.Text = "AutoFarm [" .. (CFG.AutoFarm and "ON" or "OFF") .. "]"
+    btn.BackgroundColor3 = CFG.AutoFarm
+        and Color3.fromRGB(50, 160, 80)
+        or  Color3.fromRGB(80, 30, 30)
+end)
+
+-- drag
+local drag, ds, sp = false, nil, nil
+frame.InputBegan:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch or
+       i.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag, ds, sp = true, i.Position, frame.Position
+    end
+end)
+frame.InputEnded:Connect(function(i)
+    if i.UserInputType == Enum.UserInputType.Touch or
+       i.UserInputType == Enum.UserInputType.MouseButton1 then
+        drag = false
+    end
+end)
+UIS.InputChanged:Connect(function(i)
+    if drag and (i.UserInputType == Enum.UserInputType.MouseMovement or
+                 i.UserInputType == Enum.UserInputType.Touch) then
+        local d = i.Position - ds
+        frame.Position = UDim2.new(
+            sp.X.Scale, sp.X.Offset + d.X,
+            sp.Y.Scale, sp.Y.Offset + d.Y)
+    end
+end)
