@@ -1,17 +1,16 @@
--- Blox Fruits Auto Farm | olliE Hub v9
--- Pure Lua (no Luau syntax) | Delta Mobile | Paste direct
--- Animated UI | HP bar | Auto Farm + Quest + Haki
+-- Blox Fruits Auto Farm | olliE Hub v10
+-- Pure Lua | Delta Mobile | Paste direct
+-- Auto accepts quest dialog | Farms above mob heads | Full UI
 
 local ok, err = pcall(function()
 
-local Players = game:GetService("Players")
-local UIS     = game:GetService("UserInputService")
-local VIM     = game:GetService("VirtualInputManager")
-local TW      = game:GetService("TweenService")
-local RS      = game:GetService("ReplicatedStorage")
-local lp      = Players.LocalPlayer
+local Players   = game:GetService("Players")
+local UIS       = game:GetService("UserInputService")
+local VIM       = game:GetService("VirtualInputManager")
+local TW        = game:GetService("TweenService")
+local RS        = game:GetService("ReplicatedStorage")
+local lp        = Players.LocalPlayer
 
--- wait for character
 local char = lp.Character or lp.CharacterAdded:Wait()
 char:WaitForChild("HumanoidRootPart", 10)
 char:WaitForChild("Humanoid", 10)
@@ -26,13 +25,11 @@ local CFG = {
     AutoQuest   = false,
     AutoHaki    = false,
     ScanRadius  = 2000,
-    AttackRange = 12,
+    AttackRange = 10,
     SafeHP      = 0.25,
+    HoverHeight = 2.5, -- studs above mob head
 }
 
--- ══════════════════════════════════════════
---  GETTERS
--- ══════════════════════════════════════════
 local function GetChar() return lp.Character end
 local function GetHRP()
     local c = GetChar()
@@ -53,22 +50,24 @@ local function IsAlive()
 end
 
 -- ══════════════════════════════════════════
---  WALK — natural, no teleport
+--  WALK — hover above mob head
 -- ══════════════════════════════════════════
 local function WalkTo(pos)
     local h = GetHum()
     local r = GetHRP()
     if not h or not r then return end
-    h:MoveTo(pos)
+    -- target position is above the mob's head
+    local above = Vector3.new(pos.X, pos.Y + CFG.HoverHeight, pos.Z)
+    h:MoveTo(above)
     local t = 0
     while t < 10 do
         task.wait(0.15)
         t = t + 0.15
         local r2 = GetHRP()
         if not r2 then return end
-        if (r2.Position - pos).Magnitude < CFG.AttackRange then return end
+        if (r2.Position - above).Magnitude < CFG.AttackRange then return end
         if math.floor(t) ~= math.floor(t - 0.15) then
-            h:MoveTo(pos)
+            h:MoveTo(above)
         end
     end
 end
@@ -112,11 +111,10 @@ end
 local function Skills()
     local keys = {
         Enum.KeyCode.Z, Enum.KeyCode.X,
-        Enum.KeyCode.C, Enum.KeyCode.V,
-        Enum.KeyCode.F,
+        Enum.KeyCode.C, Enum.KeyCode.V, Enum.KeyCode.F
     }
     for _, k in ipairs(keys) do
-        pcall(function() VIM:SendKeyEvent(true,  k, false, game) end)
+        pcall(function() VIM:SendKeyEvent(true, k, false, game) end)
         task.wait(0.05)
         pcall(function() VIM:SendKeyEvent(false, k, false, game) end)
         task.wait(0.05)
@@ -124,26 +122,63 @@ local function Skills()
 end
 
 -- ══════════════════════════════════════════
---  AUTO QUEST
+--  AUTO QUEST — clicks Accept button in dialog
 -- ══════════════════════════════════════════
-local function TryQuest()
-    for _, obj in ipairs(workspace:GetDescendants()) do
-        if obj:IsA("Model") and string.find(string.lower(obj.Name), "quest") then
-            local qr = obj:FindFirstChild("HumanoidRootPart")
-            if qr and GetHRP() then
-                if (GetHRP().Position - qr.Position).Magnitude > 15 then
-                    WalkTo(qr.Position)
-                end
-                local names = {"QuestStart","TakeQuest","Quest"}
-                for _, name in ipairs(names) do
-                    local rem = RS:FindFirstChild(name, true)
-                    if rem and rem:IsA("RemoteEvent") then
-                        pcall(function() rem:FireServer("Accept") end)
-                        break
+local function ClickAcceptButton()
+    -- search all GUIs for the Accept button BF uses
+    for _, gui in ipairs(lp.PlayerGui:GetDescendants()) do
+        if gui:IsA("TextButton") or gui:IsA("TextLabel") then
+            local t = string.lower(gui.Text or "")
+            if t == "accept" or t == "accept quest" then
+                -- fire a click on it
+                pcall(function()
+                    local vClick = Instance.new("InputObject")
+                    vClick.UserInputType = Enum.UserInputType.MouseButton1
+                    gui:SimulateClick()
+                end)
+                -- fallback: fire the remote directly
+                pcall(function()
+                    local remotes = {"TakeQuest","QuestStart","Quest","GiveQuest"}
+                    for _, name in ipairs(remotes) do
+                        local rem = RS:FindFirstChild(name, true)
+                        if rem and rem:IsA("RemoteEvent") then
+                            rem:FireServer("Accept")
+                            rem:FireServer(1)
+                            rem:FireServer(true)
+                        end
                     end
-                end
+                end)
             end
         end
+    end
+end
+
+local function FindQuestNPC()
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("Model") then
+            local low = string.lower(obj.Name)
+            if string.find(low,"quest") or string.find(low,"marine") or string.find(low,"military") then
+                local qr = obj:FindFirstChild("HumanoidRootPart")
+                if qr then return qr end
+            end
+        end
+    end
+    return nil
+end
+
+local function TryQuest()
+    -- click any open Accept button first
+    ClickAcceptButton()
+    task.wait(0.3)
+
+    -- walk to quest NPC if no dialog open
+    local npc = FindQuestNPC()
+    if npc and GetHRP() then
+        if (GetHRP().Position - npc.Position).Magnitude > 15 then
+            WalkTo(npc.Position)
+            task.wait(0.5)
+        end
+        ClickAcceptButton()
     end
 end
 
@@ -163,6 +198,18 @@ task.spawn(function()
 end)
 
 -- ══════════════════════════════════════════
+--  QUEST DIALOG WATCHER — fires the moment dialog appears
+-- ══════════════════════════════════════════
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if CFG.AutoQuest then
+            pcall(ClickAcceptButton)
+        end
+    end
+end)
+
+-- ══════════════════════════════════════════
 --  MAIN LOOP
 -- ══════════════════════════════════════════
 local loopTick = 0
@@ -174,7 +221,7 @@ task.spawn(function()
         if GetHP() < CFG.SafeHP then task.wait(2) continue end
 
         loopTick = loopTick + 1
-        if CFG.AutoQuest and loopTick % 30 == 0 then
+        if CFG.AutoQuest and loopTick % 60 == 0 then
             pcall(TryQuest)
         end
 
@@ -202,21 +249,18 @@ end)
 --  CLEAN OLD GUIs
 -- ══════════════════════════════════════════
 for _, g in ipairs(lp.PlayerGui:GetChildren()) do
-    if string.find(tostring(g.Name), "olliE") then
-        g:Destroy()
-    end
+    if string.find(tostring(g.Name), "olliE") then g:Destroy() end
 end
 
 -- ══════════════════════════════════════════
 --  UI
 -- ══════════════════════════════════════════
 local sg = Instance.new("ScreenGui")
-sg.Name           = "olliEv9"
+sg.Name           = "olliEv10"
 sg.ResetOnSpawn   = false
 sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 sg.Parent         = lp.PlayerGui
 
--- main window
 local win = Instance.new("Frame", sg)
 win.Size             = UDim2.new(0, 220, 0, 310)
 win.Position         = UDim2.new(0, 10, 0.5, -155)
@@ -225,26 +269,6 @@ win.BorderSizePixel  = 0
 win.ClipsDescendants = true
 Instance.new("UICorner", win).CornerRadius = UDim.new(0, 14)
 
--- shadow effect
-local shadow = Instance.new("ImageLabel", sg)
-shadow.Size             = UDim2.new(0, 260, 0, 350)
-shadow.Position         = UDim2.new(0, -10, 0, -10)
-shadow.BackgroundTransparency = 1
-shadow.Image            = "rbxassetid://6014261993"
-shadow.ImageColor3      = Color3.fromRGB(0,0,0)
-shadow.ImageTransparency = 0.6
-shadow.ScaleType        = Enum.ScaleType.Slice
-shadow.SliceCenter      = Rect.new(49,49,450,450)
-shadow.ZIndex           = 0
-
-local function updateShadow()
-    shadow.Position = UDim2.new(
-        win.Position.X.Scale, win.Position.X.Offset - 20,
-        win.Position.Y.Scale, win.Position.Y.Offset - 20)
-end
-updateShadow()
-
--- top bar
 local topbar = Instance.new("Frame", win)
 topbar.Size             = UDim2.new(1, 0, 0, 44)
 topbar.BackgroundColor3 = Color3.fromRGB(25, 160, 80)
@@ -263,7 +287,7 @@ topTxt.BackgroundTransparency = 1
 topTxt.TextColor3         = Color3.fromRGB(255,255,255)
 topTxt.Font               = Enum.Font.GothamBold
 topTxt.TextSize           = 14
-topTxt.Text               = "olliE BF Farm v9"
+topTxt.Text               = "olliE BF Farm v10"
 topTxt.TextXAlignment     = Enum.TextXAlignment.Left
 
 local minBtn = Instance.new("TextButton", topbar)
@@ -277,24 +301,21 @@ minBtn.Text             = "-"
 minBtn.BorderSizePixel  = 0
 Instance.new("UICorner", minBtn).CornerRadius = UDim.new(1,0)
 
--- content
 local content = Instance.new("Frame", win)
 content.Size               = UDim2.new(1,0,1,-44)
 content.Position           = UDim2.new(0,0,0,44)
 content.BackgroundTransparency = 1
 
--- status row
 local statusDot = Instance.new("TextLabel", content)
 statusDot.Size               = UDim2.new(1,-20,0,18)
 statusDot.Position           = UDim2.new(0,12,0,8)
 statusDot.BackgroundTransparency = 1
-statusDot.TextColor3         = Color3.fromRGB(120,120,120)
+statusDot.TextColor3         = Color3.fromRGB(100,100,100)
 statusDot.Font               = Enum.Font.Gotham
 statusDot.TextSize           = 11
-statusDot.Text               = "● idle — no targets"
+statusDot.Text               = "● idle"
 statusDot.TextXAlignment     = Enum.TextXAlignment.Left
 
--- HP bar
 local hpBG = Instance.new("Frame", content)
 hpBG.Size             = UDim2.new(1,-20,0,8)
 hpBG.Position         = UDim2.new(0,10,0,30)
@@ -314,7 +335,7 @@ hpLabel.Position           = UDim2.new(0,10,0,41)
 hpLabel.BackgroundTransparency = 1
 hpLabel.TextColor3         = Color3.fromRGB(80,80,80)
 hpLabel.Font               = Enum.Font.Gotham
-hpLabel.TextSize            = 10
+hpLabel.TextSize           = 10
 hpLabel.Text               = "HP: 100%"
 hpLabel.TextXAlignment     = Enum.TextXAlignment.Left
 
@@ -326,7 +347,7 @@ task.spawn(function()
         if h < 0.5 then col = Color3.fromRGB(220,180,50) end
         if h < 0.25 then col = Color3.fromRGB(220,60,60) end
         TW:Create(hpFill, TweenInfo.new(0.35), {
-            Size = UDim2.new(h, 0, 1, 0),
+            Size = UDim2.new(h,0,1,0),
             BackgroundColor3 = col,
         }):Play()
         hpLabel.Text = "HP: " .. tostring(pct) .. "%"
@@ -334,22 +355,20 @@ task.spawn(function()
             statusDot.Text = "● farming"
             statusDot.TextColor3 = Color3.fromRGB(80,220,120)
         else
-            statusDot.Text = "● idle — no targets"
+            statusDot.Text = "● idle"
             statusDot.TextColor3 = Color3.fromRGB(100,100,100)
         end
     end
 end)
 
--- divider
 local div = Instance.new("Frame", content)
 div.Size             = UDim2.new(1,-20,0,1)
 div.Position         = UDim2.new(0,10,0,58)
 div.BackgroundColor3 = Color3.fromRGB(30,30,30)
 div.BorderSizePixel  = 0
 
--- toggle factory
-local function MakeToggle(parent, labelTxt, desc, posY, onColor, callback)
-    local row = Instance.new("Frame", parent)
+local function MakeToggle(labelTxt, desc, posY, onColor, callback)
+    local row = Instance.new("Frame", content)
     row.Size             = UDim2.new(1,-20,0,54)
     row.Position         = UDim2.new(0,10,0,posY)
     row.BackgroundColor3 = Color3.fromRGB(20,20,20)
@@ -412,14 +431,13 @@ local function MakeToggle(parent, labelTxt, desc, posY, onColor, callback)
     end)
 end
 
-MakeToggle(content, "Auto Farm",  "walks to mobs & attacks",  65,
+MakeToggle("Auto Farm",  "walks to mobs & attacks",  65,
     Color3.fromRGB(50,180,90),  function(v) CFG.AutoFarm  = v end)
-MakeToggle(content, "Auto Quest", "accepts quests from NPCs", 127,
+MakeToggle("Auto Quest", "auto accepts quest dialog", 127,
     Color3.fromRGB(60,120,220), function(v) CFG.AutoQuest = v end)
-MakeToggle(content, "Auto Haki",  "keeps buso/ken active",    189,
+MakeToggle("Auto Haki",  "keeps buso/ken active",    189,
     Color3.fromRGB(160,70,220), function(v) CFG.AutoHaki  = v end)
 
--- minimize
 local minimized = false
 minBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
@@ -431,7 +449,6 @@ minBtn.MouseButton1Click:Connect(function()
     minBtn.Text = minimized and "+" or "-"
 end)
 
--- drag from topbar
 local drag, ds, sp = false, nil, nil
 topbar.InputBegan:Connect(function(i)
     if i.UserInputType == Enum.UserInputType.Touch
@@ -456,11 +473,8 @@ UIS.InputChanged:Connect(function(i)
         win.Position = UDim2.new(
             sp.X.Scale, sp.X.Offset + d.X,
             sp.Y.Scale, sp.Y.Offset + d.Y)
-        updateShadow()
     end
 end)
 
 end)
-if not ok then
-    warn("[olliE v9] ERROR: " .. tostring(err))
-end
+if not ok then warn("[olliE v10] ERROR: " .. tostring(err)) end
